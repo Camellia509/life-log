@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `one_daily_record` ON `records` (`owner`,`kind`,`date`) WHERE kind IN ('sleep','meal');
