@@ -1,18 +1,27 @@
 # 薄荷溪居架构说明
 
-## 阶段 1 当前架构
+## 阶段 2 当前架构
 
-当前版本是本地运行的 Vinext/React 全栈应用。前端通过同源 `/api/life/` 调用服务端路由，服务端使用本地模拟的 Cloudflare D1。
+当前版本由两个本地进程组成：
+
+- Vinext/React 前端运行在 `http://localhost:5173`。
+- 标准 Cloudflare Worker 运行在 `http://localhost:8787`，通过 `DB` binding 使用本地 D1。
+
+浏览器读取 `VITE_LIFE_API_BASE_URL` 后直接跨域调用 Worker。Next API 路由和 Cookie 后端已经删除，不存在正式或隐藏的转发层。
 
 数据模型只有一个个人账号：
 
 - `users` 保存唯一账号的登录资料、个人设置、月度重点和修订号。
-- `sessions` 保存登录会话。
+- `sessions` 只保存 Bearer token 的 SHA-256 摘要、设备摘要、可读设备名称、UA 摘要、创建/最近使用/到期/撤销时间。
 - `records` 保存睡眠、学习、餐饮和习惯打卡记录。
 - `habits` 保存运动、清洁、每日 SOP 和自定义项目。
 - `attempts` 保存登录尝试限流状态。
 
 邀请、成员角色、亲友分享、用户所有权字段和用户图片功能均已移除。水彩花束、植物小屋和溪流是静态界面素材。
+
+原始 Bearer token 只返回给登录设备，并保存在该浏览器的 `localStorage`。退出登录会撤销 Worker 会话并清除本地 token；`401` 也会清除本地 token。统计和 Excel 文件生成继续在浏览器端完成。
+
+Worker 对所有 `/api/life/*` 请求先执行精确 Origin 校验。`ALLOWED_ORIGINS` 缺失、包含 `*` 或包含非法项目时关闭业务访问。合法响应返回精确 Origin 和 `Vary: Origin`，不使用 Cookie 或 `Access-Control-Allow-Credentials`。
 
 本阶段没有创建、修改或连接任何云端资源。
 
@@ -26,9 +35,13 @@
 - 网络目标：免费、跨设备公网访问、尽力覆盖中国大陆网络，不承诺大陆稳定性。
 - 费用边界：不绑定付款方式，不启用付费计划，不接受按量计费。
 
-## 阶段 2 待处理项
+## 阶段 3 接手项
 
-阶段 1 保留了现有同源 Cookie 会话和来源校验。前端迁到 GitHub Pages 后会变成跨来源调用，因此 GitHub Pages 精确白名单、Bearer 鉴权、跨域预检和独立 Worker 必须在阶段 2 一并设计和测试。本阶段没有提前实现这些内容。
+- 将当前 Next/Vinext 页面改成 GitHub Pages 可发布的静态前端。
+- 设置 Vite `base` 和正式 `VITE_LIFE_API_BASE_URL`。
+- 将准确的 GitHub Pages Origin 写入 Worker `ALLOWED_ORIGINS`；Origin 不含仓库路径。
+- 增加设备会话管理界面，复用阶段 2 的 `GET /sessions` 与 `DELETE /sessions/:id`。
+- 阶段 2 的 Worker API、Bearer 客户端和业务行为保持不变。
 
 ## 修订后的完整阶段
 
