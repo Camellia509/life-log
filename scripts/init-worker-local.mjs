@@ -8,7 +8,7 @@ const applied=fs.existsSync(marker)?JSON.parse(fs.readFileSync(marker,'utf8')):[
 for(const name of fs.readdirSync('drizzle').filter(file=>file.endsWith('.sql')).sort()){
   if(applied.includes(name))continue;
   const result=spawnSync(process.execPath,[
-    '--import','./scripts/sites-env.mjs','./node_modules/wrangler/bin/wrangler.js','d1','execute','DB','--local',
+    '--import','./scripts/wrangler-env.mjs','./node_modules/wrangler/bin/wrangler.js','d1','execute','DB','--local',
     '--config','worker/wrangler.jsonc','--persist-to',state,'--file',`drizzle/${name}`,
   ],{stdio:'inherit'});
   if(result.status!==0)throw new Error(`Local Worker migration failed: ${name}`);

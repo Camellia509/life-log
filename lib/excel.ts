@@ -1,5 +1,5 @@
 import type {LifeRecord,Data,Habit} from './life';
-import {sleepHours,labels,frequencyText} from './life';
+import {frequencyText} from './life';
 const columns:Record<string,[string,string][]>= {
 sleep:[['date','日期'],['arrangement','安排'],['bed','睡觉时间'],['wake','起床时间'],['rating','睡眠评分(1-5)'],['early','不熬夜'],['notes','备注']],
 study:[['date','日期'],['project','课程/项目'],['task','任务类型'],['planned','计划分钟'],['actual','实际分钟'],['complete','完成'],['focus','专注度(1-5)'],['notes','备注']],

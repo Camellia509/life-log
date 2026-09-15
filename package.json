@@ -1,21 +1,26 @@
 {
-  "name": "site-creator-vinext-starter",
+  "name": "mint-creek-life-log",
   "version": "0.1.0",
   "private": true,
   "engines": {
     "node": ">=22.13.0"
   },
   "scripts": {
-    "install:ci": "node scripts/install-ci.mjs",
-    "dev": "node scripts/run-framework.mjs dev",
-    "build": "node scripts/run-framework.mjs build",
-    "start": "node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js dev --config dist/server/wrangler.json --local --persist-to .wrangler/state --ip 127.0.0.1 --inspector-port 0",
+    "dev": "vite --host 127.0.0.1 --port 5173",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 4173",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "npm run test:api && npm run test:excel && npm run test:migration",
     "worker:db:init": "node scripts/init-worker-local.mjs",
     "worker:dev": "node scripts/run-worker-local.mjs",
     "worker:typecheck": "tsc -p worker/tsconfig.json",
-    "worker:dry-run": "node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js deploy --dry-run --config worker/wrangler.jsonc --outdir ../work/worker-dry-run",
-    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
-    "db:generate": "drizzle-kit generate"
+    "worker:dry-run": "node --import ./scripts/wrangler-env.mjs ./node_modules/wrangler/bin/wrangler.js deploy --dry-run --config worker/wrangler.jsonc --outdir ../work/worker-dry-run",
+    "db:generate": "drizzle-kit generate",
+    "test:api": "node work/api-test.mjs",
+    "test:excel": "node work/excel-test.mjs",
+    "test:migration": "node scripts/run-migration-tests.mjs",
+    "test:static": "node work/static-build-test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
@@ -30,8 +35,6 @@
     "exceljs": "^4.4.0",
     "input-otp": "^1.4.2",
     "lucide-react": "^1.31.0",
-    "next": "16.3.4",
-    "next-themes": "^0.4.6",
     "radix-ui": "^1.6.7",
     "react": "19.2.6",
     "react-day-picker": "^10.0.1",
@@ -45,24 +48,23 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "1.37.1",
     "@cloudflare/workers-types": "4.20260515.1",
     "@tailwindcss/postcss": "4.2.1",
     "@types/node": "22.19.19",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.2",
-    "@vitejs/plugin-rsc": "0.5.26",
     "drizzle-kit": "0.31.10",
     "eslint": "9.39.4",
-    "eslint-config-next": "16.3.4",
-    "react-server-dom-webpack": "19.2.6",
     "tailwindcss": "4.2.1",
     "tw-animate-css": "^1.4.0",
     "typescript": "5.9.3",
-    "vinext": "1.0.0-beta.5",
     "vite": "8.0.13",
-    "wrangler": "4.92.0"
+    "wrangler": "4.92.0",
+    "@eslint/js": "^9.39.4",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "typescript-eslint": "^8.59.3",
+    "globals": "^14.0.0"
   },
   "type": "module",
   "overrides": {

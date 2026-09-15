@@ -1,45 +1,21 @@
-import vinext from "vinext";
-import { defineConfig } from "vite";
-import { readExecutionProfile } from "./scripts/execution-profile.mjs";
-import { sites } from "./build/sites-vite-plugin";
+import {fileURLToPath,URL} from 'node:url';
+import react from '@vitejs/plugin-react';
+import {defineConfig,loadEnv} from 'vite';
 
-// macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
-const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
-const managedLinux = readExecutionProfile() === "managed-linux";
+function normalizeBase(value:string){
+  const trimmed=value.trim();
+  if(!trimmed||trimmed==='/')return '/';
+  return `/${trimmed.replace(/^\/+|\/+$/g,'')}/`;
+}
 
-const localBindingConfig = {
-  main: "vinext/server/fetch-handler",
-  compatibility_flags: ["nodejs_compat"],
-};
-
-export default defineConfig(async ({ command }) => {
-  // Use Miniflare's local Request.cf placeholder unless fetching is requested.
-  process.env.CLOUDFLARE_CF_FETCH_ENABLED ??= "false";
-  process.env.WRANGLER_SEND_METRICS ??= "false";
-
-  // Keep Wrangler and Miniflare state project-local. These are non-secret tool
-  // settings; application environment belongs in ignored `.env*` files.
-  process.env.WRANGLER_WRITE_LOGS ??= "false";
-  process.env.WRANGLER_LOG_PATH ??= ".wrangler/logs";
-  process.env.WRANGLER_REGISTRY_PATH ??= ".wrangler/dev-registry";
-  process.env.MINIFLARE_REGISTRY_PATH ??= ".wrangler/registry";
-
-  // Wrangler snapshots its log path while the Cloudflare plugin is imported.
-  const { cloudflare } = await import("@cloudflare/vite-plugin");
-
+export default defineConfig(({mode})=>{
+  const env=loadEnv(mode,process.cwd(),'');
   return {
-    server: {
-      ...(managedLinux ? { host: "0.0.0.0", allowedHosts: ["terminal.local"] } : {}),
-      ...(isCodexSeatbeltSandbox ? { watch: { useFsEvents: false, usePolling: true } } : {}),
-    },
-    plugins: [
-      vinext(),
-      sites({ mockAuth: !managedLinux }),
-      cloudflare({
-        viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
-        inspectorPort: false,
-        config: {...localBindingConfig, vars: {MINT_LOCAL_SETUP: command === 'serve' ? '1' : ''}},
-      }),
-    ],
+    base:normalizeBase(env.BASE_PATH||'/life-log/'),
+    plugins:[react()],
+    resolve:{alias:{'@':fileURLToPath(new URL('.',import.meta.url))}},
+    server:{host:'127.0.0.1',port:5173,strictPort:true},
+    preview:{host:'127.0.0.1',port:4173,strictPort:true},
+    build:{outDir:'dist',emptyOutDir:true},
   };
 });

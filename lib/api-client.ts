@@ -1,7 +1,7 @@
 const TOKEN_KEY='mint_life_bearer';
 const DEVICE_KEY='mint_life_device';
-const configuredBase=(import.meta as ImportMeta&{env?:Record<string,string|undefined>}).env?.VITE_LIFE_API_BASE_URL;
-const API_BASE=(configuredBase||'http://localhost:8787/api/life').replace(/\/$/,'');
+const configuredBase=import.meta.env.VITE_API_BASE_URL?.trim();
+const API_ORIGIN=(configuredBase||(import.meta.env.DEV?'http://localhost:8787':'')).replace(/\/+$/,'');
 
 export function getAuthToken(){return typeof window==='undefined'?null:window.localStorage.getItem(TOKEN_KEY)}
 export function clearAuthToken(){if(typeof window!=='undefined')window.localStorage.removeItem(TOKEN_KEY)}
@@ -15,11 +15,12 @@ function deviceId(){
 }
 
 export async function api<T=unknown>(path:string,method='GET',value?:unknown):Promise<T>{
+  if(!API_ORIGIN)throw new Error('尚未配置 Worker API 地址，请设置 VITE_API_BASE_URL');
   const token=getAuthToken();
   const headers:Record<string,string>={};
   if(token)headers.Authorization=`Bearer ${token}`;
   if(value!==undefined)headers['Content-Type']='application/json';
-  const response=await fetch(`${API_BASE}/${path}`,{method,headers,body:value===undefined?undefined:JSON.stringify(value)});
+  const response=await fetch(`${API_ORIGIN}/api/life/${path.replace(/^\/+/, '')}`,{method,headers,body:value===undefined?undefined:JSON.stringify(value)});
   const text=await response.text();
   let data:unknown={};
   if(text){try{data=JSON.parse(text)}catch{data={error:'服务器返回了无法识别的内容'}}}
@@ -39,4 +40,3 @@ export async function logout(){
   try{await api('logout','POST',{})}catch{revoked=false}finally{clearAuthToken()}
   return revoked;
 }
-
