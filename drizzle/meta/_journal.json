@@ -15,6 +15,13 @@
       "when": 1789374423496,
       "tag": "0001_large_shotgun",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1789437335997,
+      "tag": "0002_single_user_no_files",
+      "breakpoints": true
     }
   ]
 }

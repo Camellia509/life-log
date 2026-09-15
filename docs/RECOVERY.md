@@ -1,42 +1,39 @@
 # 本地备份与恢复说明
 
-## 阶段 0 备份位置
+## 恢复点
 
-本次基线备份保存在 `backups/stage0-baseline-20260914/`。`backups/` 已加入 `.gitignore`，其中可能包含账号资料和密码派生值，禁止提交到 GitHub、聊天附件或公开网盘。
+两个恢复点均位于被 Git 忽略的 `backups/`：
 
-目录内容：
+- `backups/stage0-baseline-20260914/`：阶段 0 的完整第一版本地基线。
+- `backups/stage1-pre-migration-20260914/`：阶段 1 删除表和字段之前再次建立的恢复点。
 
-- `wrangler-state.zip`：第一版本地 `.wrangler/state` 的完整归档，包含 D1 状态和当时的本地 R2 状态。
-- `d1-baseline.sql`：从实际本地 D1 SQLite 数据库导出的完整 SQL。
-- `restore-state/restored.sqlite`：在全新目录中由 SQL 建立的恢复演练数据库。
-- `restore-verification.json`：源库与恢复库的完整性、逐表行数及内容哈希比对结果，不包含记录正文。
+每个恢复点包含：
+
+- `wrangler-state.zip`：当时的完整 `.wrangler/state`。
+- `d1-baseline.sql`：实际本地 D1 SQLite 数据库的全量 SQL。
+- `restore-state/restored.sqlite`：在独立新目录中由 SQL 建立的恢复数据库。
+- `restore-verification.json`：源库与恢复库的完整性、逐表行数和内容哈希比对结果，不含记录正文。
 - `SHA256SUMS.txt`：备份文件校验值。
 
-## 恢复第一版本地状态
+备份可能包含账号资料和密码派生值，不得提交到 GitHub、聊天附件或公开网盘。
+
+## 恢复完整本地状态
 
 1. 停止本地预览服务。
-2. 将当前 `.wrangler/state` 改名保存，不要直接删除。
-3. 解压 `wrangler-state.zip`，将其中的 `state` 目录放回项目 `.wrangler/state`。
-4. 运行现有本地服务并检查登录、记录、习惯和图片功能。
+2. 将当前 `.wrangler/state` 改名保存，禁止直接删除。
+3. 解压所选恢复点的 `wrangler-state.zip`。
+4. 将解压得到的 `state` 目录放回项目 `.wrangler/state`。
+5. 运行对应版本源码并检查登录和核心数据。
 
-这是第一版的完整回退方式。阶段 1 以后，图片和 R2 会从新架构中移除，但该归档仍保留第一版状态。
+阶段 0 恢复点应配合阶段 0 Git 提交 `125029d31952a477dcccb25d486e944145771ac5` 使用。阶段 1 源码不可直接读取旧 Schema，需先运行阶段 1 迁移。
 
-## 从 SQL 恢复 D1 数据
+## 从 SQL 恢复
 
-`d1-baseline.sql` 是与 SQLite/D1 兼容的完整导出。恢复时应导入一个空白数据库或全新的本地持久化目录，禁止直接覆盖正在使用的数据库。
-
-恢复完成后必须检查：
+`d1-baseline.sql` 应导入空白数据库或全新的本地持久化目录，不能覆盖正在使用的数据库。恢复后必须确认：
 
 1. `PRAGMA integrity_check` 返回 `ok`。
 2. 所有预期表存在。
 3. 源库和恢复库逐表行数一致。
-4. 每张表的规范化行内容 SHA-256 一致。
+4. 每张表规范化行内容的 SHA-256 一致。
 
-本阶段已通过 `scripts/verify-sql-backup.py` 在独立目录执行上述演练。后续迁移会在每次 Schema 变更前重新运行同等验证。
-
-## 恢复演练的安全要求
-
-- 永远使用新的恢复目录或新的 D1 数据库。
-- 不在日志中打印记录正文、邮箱、会话令牌或密码派生值。
-- 先验证备份哈希，再导入。
-- 恢复成功后先运行测试，再切换实际数据目录。
+`scripts/verify-sql-backup.py` 已用于两个恢复点的独立恢复演练。

@@ -1,7 +1,6 @@
 export type Kind='sleep'|'study'|'meal'|'check';
 export type Data=Record<string,string|number|boolean>;
-export type LifeRecord={id:string;kind:Kind;date:string;data:Data;revision:number;updated?:string;ownerName?:string;owner?:string;files?:Attachment[]};
-export type Attachment={id:string;name:string;mime:string;size:number};
+export type LifeRecord={id:string;kind:Kind;date:string;data:Data;revision:number;updated?:string};
 export type Habit={id:string;name:string;category:'运动'|'清洁'|'每日 SOP';frequency:'daily'|'weekly'|'biweekly'|'monthly';days:number[];monthDay:number;minutes:number;target:number;active:boolean;revision:number};
 export type Settings={hidden:string[];sleepGoal:number;studyGoal:number;bedtime:string;focus:string;focusByMonth?:Record<string,string>};
 export const defaultSettings:Settings={hidden:[],sleepGoal:8,studyGoal:120,bedtime:'23:30',focus:''};

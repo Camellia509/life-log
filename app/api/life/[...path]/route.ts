@@ -1,38 +1,131 @@
-import {db,json,body,user,mustUser,fail,csrf,guard,hash,random,passwordHash,equal,session,cleanUser,seedHabits,unpack,validateRecord,validateHabit,limit,runtime} from '@/lib/server';
+import {body,cleanUser,csrf,db,equal,fail,guard,hash,json,limit,mustUser,passwordHash,random,runtime,seedHabits,session,unpack,user,validateHabit,validateRecord} from '@/lib/server';
 import {defaultSettings,type LifeRecord} from '@/lib/life';
+
 export const dynamic='force-dynamic';
+
 function parts(req:Request){return new URL(req.url).pathname.replace(/^\/api\/life\/?/,'').split('/')}
-export async function GET(req:Request){return guard(async()=>{const [op,id]=parts(req);const u=await user(req);
-if(op==='session'){const n=await db().prepare('SELECT COUNT(*) AS n FROM users').first<{n:number}>();return json({user:u?cleanUser(u):null,setup:n?.n===0,canSetup:runtime.MINT_LOCAL_SETUP==='1'||!!(runtime.MINT_OWNER_EMAIL&&runtime.MINT_SETUP_TOKEN),setupCodeRequired:runtime.MINT_LOCAL_SETUP!=='1'})}
-if(!u)fail(401,'请先登录');
-if(op==='records'){const month=new URL(req.url).searchParams.get('month');const rows=month?await db().prepare('SELECT * FROM records WHERE owner=? AND date LIKE ? ORDER BY date DESC,updated DESC').bind(u.id,month+'%').all():await db().prepare('SELECT * FROM records WHERE owner=? ORDER BY date DESC,updated DESC').bind(u.id).all();const fs=await db().prepare('SELECT * FROM files WHERE owner=?').bind(u.id).all();return json(rows.results.map(r=>({...unpack(r),files:fs.results.filter(f=>f.record_id===r.id)})))}
-if(op==='habits'){const r=await db().prepare('SELECT * FROM habits WHERE owner=? ORDER BY rowid').bind(u.id).all();return json(r.results.map(h=>({...JSON.parse(String(h.payload)),revision:h.revision})))}
-if(op==='members'){return json((await db().prepare('SELECT id,name,email FROM users WHERE id<>?').bind(u.id).all()).results)}
-if(op==='invites'){if(u.role!=='owner')fail(403,'仅管理员可管理邀请');return json((await db().prepare('SELECT email,expires,used FROM invites ORDER BY expires DESC').all()).results)}
-if(op==='shares'){const own=await db().prepare('SELECT s.id,s.record_id AS recordId,s.viewer,u.name FROM shares s JOIN records r ON r.id=s.record_id JOIN users u ON u.id=s.viewer WHERE r.owner=?').bind(u.id).all();const shared=await db().prepare('SELECT r.*,u.name AS ownerName FROM shares s JOIN records r ON r.id=s.record_id JOIN users u ON u.id=r.owner WHERE s.viewer=? ORDER BY r.date DESC').bind(u.id).all();const fs=await db().prepare('SELECT f.* FROM files f JOIN shares s ON s.record_id=f.record_id WHERE s.viewer=?').bind(u.id).all();return json({own:own.results,received:shared.results.map(r=>({...unpack(r),files:fs.results.filter(f=>f.record_id===r.id)}))})}
-if(op==='file'){const f=await db().prepare('SELECT * FROM files WHERE id=? AND (owner=? OR record_id IN (SELECT record_id FROM shares WHERE viewer=?))').bind(id,u.id,u.id).first();if(!f)fail(404,'图片不存在或已取消分享');const obj=await runtime.BUCKET.get(id);if(!obj)fail(404,'图片不存在');return new Response(obj.body,{headers:{'Content-Type':String(f.mime),'Cache-Control':'private,no-store','X-Content-Type-Options':'nosniff','Content-Disposition':'inline'}})}
-return json({error:'未找到'},404)})}
-export async function POST(req:Request){return guard(async()=>{const [op]=parts(req);const uploadForm=op==='upload'?await req.formData():null;const parsed=op==='upload'?null:await body(req);csrf(req);
-if(['login','setup','register'].includes(op)){const b=parsed;const email=String(b.email||'').trim().toLowerCase();const password=String(b.password||'');if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||email.length>254||password.length<12||password.length>200)fail(400,'请填写有效邮箱和至少 12 位密码');await limit('login:'+email);await limit('ip:'+(req.headers.get('cf-connecting-ip')||'local'),60);
-if(op==='login'){const found=await db().prepare('SELECT * FROM users WHERE email=?').bind(email).first<{id:string;password:string;salt:string}>();const test=await passwordHash(password,found?.salt||'missing-user-salt');if(!found||!equal(test,found.password))fail(401,'邮箱或密码不正确');return json({ok:true},200,{'Set-Cookie':await session(found.id,req)})}
-const name=String(b.name||'').trim().slice(0,40);if(!name)fail(400,'请填写昵称');const salt=random();const ph=await passwordHash(password,salt);const id=op==='setup'?'owner':crypto.randomUUID();
-if(op==='setup'){const allowed=runtime.MINT_OWNER_EMAIL;if(runtime.MINT_LOCAL_SETUP!=='1'&&(!allowed||allowed.toLowerCase()!==email||!runtime.MINT_SETUP_TOKEN||!equal(String(b.setupCode||''),runtime.MINT_SETUP_TOKEN)))fail(403,'请使用管理员邮箱和正确的空间创建码');await db().prepare('INSERT INTO users(id,email,name,password,salt,role,settings) SELECT ?,?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM users)').bind(id,email,name,ph,salt,'owner',JSON.stringify(defaultSettings)).run();const found=await db().prepare('SELECT salt FROM users WHERE id=?').bind(id).first<{salt:string}>();if(found?.salt!==salt)fail(409,'网站已初始化，请登录')}
-else{const token=await hash(String(b.token||''));const result=await db().batch([db().prepare('INSERT INTO users(id,email,name,password,salt,role,settings) SELECT ?,?,?,?,?,?,? WHERE (SELECT COUNT(*) FROM users)<5 AND EXISTS(SELECT 1 FROM invites WHERE token=? AND email=? AND used=0 AND expires>?)').bind(id,email,name,ph,salt,'member',JSON.stringify(defaultSettings),token,email,Date.now()),db().prepare('UPDATE invites SET used=1 WHERE token=? AND EXISTS(SELECT 1 FROM users WHERE id=?)').bind(token,id)]);if(!result[0].meta.changes)fail(400,'邀请无效、已过期或成员已满 5 人')}
-await seedHabits(id);return json({ok:true},200,{'Set-Cookie':await session(id,req)})}
-const u=await mustUser(req);
-if(op==='logout'){const token=req.headers.get('cookie')?.match(/mint_session=([a-f0-9]{64})/)?.[1];if(token)await db().prepare('DELETE FROM sessions WHERE token=?').bind(await hash(token)).run();return json({ok:true},200,{'Set-Cookie':'mint_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'})}
-if(op==='upload'){if(Number(req.headers.get('content-length')||0)>6*1024*1024)fail(413,'单张图片上限 5 MB');const form=uploadForm!;const f=form.get('file');const recordId=String(form.get('recordId')||'');if(!(f instanceof File)||f.size>5*1024*1024||f.size===0||!['image/png','image/jpeg','image/webp'].includes(f.type))fail(400,'请选择 5 MB 以内的 PNG、JPG 或 WebP 图片');if(!await db().prepare('SELECT id FROM records WHERE id=? AND owner=?').bind(recordId,u.id).first())fail(404,'记录不存在');const total=await db().prepare('SELECT COUNT(*) n FROM files WHERE record_id=?').bind(recordId).first<{n:number}>();if((total?.n||0)>=6)fail(400,'每条记录最多 6 张图片');const bytes=await f.arrayBuffer();const a=new Uint8Array(bytes);if(!((f.type==='image/png'&&a[0]===137&&a[1]===80)||(f.type==='image/jpeg'&&a[0]===255&&a[1]===216)||(f.type==='image/webp'&&String.fromCharCode(...a.slice(0,4))==='RIFF'&&String.fromCharCode(...a.slice(8,12))==='WEBP')))fail(400,'图片格式与内容不匹配');const id=crypto.randomUUID();await runtime.BUCKET.put(id,bytes,{httpMetadata:{contentType:f.type}});try{await db().prepare('INSERT INTO files(id,record_id,owner,name,mime,size) VALUES(?,?,?,?,?,?)').bind(id,recordId,u.id,f.name.slice(0,150),f.type,f.size).run()}catch(e){await runtime.BUCKET.delete(id);throw e}return json({id})}
-const b=parsed;
-if(op==='record'){validateRecord(b);const id=b.id||crypto.randomUUID();if(b.id){const r=await db().prepare('UPDATE records SET kind=?,date=?,payload=?,revision=revision+1,updated=? WHERE id=? AND owner=? AND revision=?').bind(b.kind,b.date,JSON.stringify(b.data),new Date().toISOString(),id,u.id,b.revision).run();if(!r.meta.changes)fail(409,'这条记录已在其他设备更新，请刷新后重试')}else{if(['sleep','meal'].includes(b.kind)&&await db().prepare('SELECT id FROM records WHERE owner=? AND kind=? AND date=?').bind(u.id,b.kind,b.date).first())fail(409,'这一天已有记录，请编辑原记录');await db().prepare('INSERT INTO records(id,owner,kind,date,payload,updated) VALUES(?,?,?,?,?,?)').bind(id,u.id,b.kind,b.date,JSON.stringify(b.data),new Date().toISOString()).run()}return json({id})}
-if(op==='check'){const h=await db().prepare('SELECT payload FROM habits WHERE id=? AND owner=?').bind(b.habitId,u.id).first<{payload:string}>();if(!h)fail(404,'习惯不存在');const data=JSON.parse(h.payload);const previous=await db().prepare("SELECT id FROM records WHERE owner=? AND kind='check' AND date=? AND (json_extract(payload,'$.habitId')=? OR (json_extract(payload,'$.name')=? AND json_extract(payload,'$.category')=?)) LIMIT 1").bind(u.id,b.date,b.habitId,data.name,data.category).first<{id:string}>();const id=previous?.id||u.id+':'+b.habitId+':'+b.date;const r={id,revision:1,kind:'check',date:b.date,data:{habitId:b.habitId,name:data.name,category:data.category,minutes:data.minutes,complete:!!b.complete}} as LifeRecord;validateRecord(r);await db().prepare('INSERT INTO records(id,owner,kind,date,payload,updated) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,revision=records.revision+1,updated=excluded.updated').bind(id,u.id,'check',b.date,JSON.stringify(r.data),new Date().toISOString()).run();return json({ok:true})}
-if(op==='habit'){validateHabit(b);if(b.id){const r=await db().prepare('UPDATE habits SET payload=?,revision=revision+1 WHERE id=? AND owner=? AND revision=?').bind(JSON.stringify(b),b.id,u.id,b.revision).run();if(!r.meta.changes)fail(409,'习惯已在其他设备更新，请刷新')}else{b.id=crypto.randomUUID();await db().prepare('INSERT INTO habits(id,owner,payload) VALUES(?,?,?)').bind(b.id,u.id,JSON.stringify(b)).run()}return json({ok:true})}
-if(op==='settings'){const s=b.settings;if(!s||!Array.isArray(s.hidden)||s.hidden.some((x:unknown)=>!['sleep','study','meal','运动','清洁','每日 SOP'].includes(String(x)))||!Number.isFinite(s.sleepGoal)||s.sleepGoal<1||s.sleepGoal>24||!Number.isFinite(s.studyGoal)||s.studyGoal<1||s.studyGoal>1440||!/^([01]\d|2[0-3]):[0-5]\d$/.test(s.bedtime)||String(s.focus).length>2000)fail(400,'目标设置无效');const r=await db().prepare('UPDATE users SET settings=?,name=?,revision=revision+1 WHERE id=? AND revision=?').bind(JSON.stringify(s),String(b.name||u.name).slice(0,40),u.id,b.revision).run();if(!r.meta.changes)fail(409,'设置已在其他设备更新，请刷新');return json({ok:true})}
-if(op==='invite'){if(u.role!=='owner')fail(403,'仅管理员可邀请');const email=String(b.email||'').trim().toLowerCase();if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))fail(400,'邮箱格式无效');if(await db().prepare('SELECT id FROM users WHERE email=?').bind(email).first())fail(409,'该成员已经加入');const n=await db().prepare('SELECT COUNT(*) n FROM users').first<{n:number}>();if((n?.n||0)>=5)fail(400,'成员已满 5 人');const token=random();await db().prepare('INSERT INTO invites(token,email,expires,used) VALUES(?,?,?,0) ON CONFLICT(email) DO UPDATE SET token=excluded.token,expires=excluded.expires,used=0').bind(await hash(token),email,Date.now()+7*86400000).run();return json({token})}
-if(op==='share'){if(!await db().prepare('SELECT id FROM records WHERE id=? AND owner=?').bind(b.recordId,u.id).first())fail(404,'记录不存在');if(!await db().prepare('SELECT id FROM users WHERE id=? AND id<>?').bind(b.viewer,u.id).first())fail(400,'请选择亲友');await db().prepare('INSERT OR IGNORE INTO shares(id,record_id,viewer) VALUES(?,?,?)').bind(crypto.randomUUID(),b.recordId,b.viewer).run();return json({ok:true})}
-if(op==='import'){if(!Array.isArray(b.records)||b.records.length>40)fail(400,'单次请求最多导入 40 条记录');const existing=(await db().prepare('SELECT kind,date,payload FROM records WHERE owner=?').bind(u.id).all()).results;const key=(r:LifeRecord)=>r.kind+'|'+r.date+'|'+(r.kind==='study'?JSON.stringify(Object.fromEntries(Object.entries(r.data).sort(([a],[b])=>a.localeCompare(b)))):r.kind==='check'?String(r.data.name):'');const known=new Set(existing.map(r=>key(unpack(r))));const unique:LifeRecord[]=[];let skipped=0;for(const r of b.records){validateRecord(r);const k=key(r);if(known.has(k)){skipped++;continue}known.add(k);unique.push(r)}if(unique.length)await db().batch(unique.map(r=>db().prepare('INSERT INTO records(id,owner,kind,date,payload,updated) VALUES(?,?,?,?,?,?)').bind(crypto.randomUUID(),u.id,r.kind,r.date,JSON.stringify(r.data),new Date().toISOString())));return json({imported:unique.length,skipped})}
-return json({error:'未找到'},404)})}
-export async function DELETE(req:Request){return guard(async()=>{csrf(req);const u=await mustUser(req);const [op,id]=parts(req);
-if(op==='record'){const r=await db().prepare('SELECT id FROM records WHERE id=? AND owner=?').bind(id,u.id).first();if(!r)fail(404,'记录不存在');const fs=await db().prepare('SELECT id FROM files WHERE record_id=?').bind(id).all();if(fs.results.length)await runtime.BUCKET.delete(fs.results.map(f=>String(f.id)));await db().prepare('DELETE FROM records WHERE id=? AND owner=?').bind(id,u.id).run();return json({ok:true})}
-if(op==='share'){await db().prepare('DELETE FROM shares WHERE id=? AND record_id IN(SELECT id FROM records WHERE owner=?)').bind(id,u.id).run();return json({ok:true})}
-if(op==='file'){const f=await db().prepare('SELECT id FROM files WHERE id=? AND owner=?').bind(id,u.id).first();if(!f)fail(404,'图片不存在');await runtime.BUCKET.delete(id);await db().prepare('DELETE FROM files WHERE id=? AND owner=?').bind(id,u.id).run();return json({ok:true})}
-if(op==='invite'){if(u.role!=='owner')fail(403,'仅管理员可撤销邀请');await db().prepare('DELETE FROM invites WHERE email=? AND used=0').bind(decodeURIComponent(id)).run();return json({ok:true})}return json({error:'未找到'},404)})}
+
+export async function GET(req:Request){return guard(async()=>{
+  const [op]=parts(req);
+  const u=await user(req);
+  if(op==='session'){
+    const n=await db().prepare('SELECT COUNT(*) AS n FROM users').first<{n:number}>();
+    return json({user:u?cleanUser(u):null,setup:n?.n===0,canSetup:runtime.MINT_LOCAL_SETUP==='1'||!!(runtime.MINT_OWNER_EMAIL&&runtime.MINT_SETUP_TOKEN),setupCodeRequired:runtime.MINT_LOCAL_SETUP!=='1'});
+  }
+  if(!u)fail(401,'请先登录');
+  if(op==='records'){
+    const month=new URL(req.url).searchParams.get('month');
+    const rows=month
+      ?await db().prepare('SELECT * FROM records WHERE date LIKE ? ORDER BY date DESC,updated DESC').bind(month+'%').all()
+      :await db().prepare('SELECT * FROM records ORDER BY date DESC,updated DESC').all();
+    return json(rows.results.map(unpack));
+  }
+  if(op==='habits'){
+    const rows=await db().prepare('SELECT * FROM habits ORDER BY rowid').all();
+    return json(rows.results.map(h=>({...JSON.parse(String(h.payload)),revision:h.revision})));
+  }
+  return json({error:'未找到'},404);
+})}
+
+export async function POST(req:Request){return guard(async()=>{
+  const [op]=parts(req);
+  const parsed=await body(req);
+  csrf(req);
+  if(op==='login'||op==='setup'){
+    const email=String(parsed.email||'').trim().toLowerCase();
+    const password=String(parsed.password||'');
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||email.length>254||password.length<12||password.length>200)fail(400,'请填写有效邮箱和至少 12 位密码');
+    await limit('login:'+email);
+    await limit('ip:'+(req.headers.get('cf-connecting-ip')||'local'),60);
+    if(op==='login'){
+      const found=await db().prepare('SELECT * FROM users WHERE email=?').bind(email).first<{id:string;password:string;salt:string}>();
+      const test=await passwordHash(password,found?.salt||'missing-user-salt');
+      if(!found||!equal(test,found.password))fail(401,'邮箱或密码不正确');
+      return json({ok:true},200,{'Set-Cookie':await session(found.id,req)});
+    }
+    const name=String(parsed.name||'').trim().slice(0,40);
+    if(!name)fail(400,'请填写昵称');
+    const allowed=runtime.MINT_OWNER_EMAIL;
+    if(runtime.MINT_LOCAL_SETUP!=='1'&&(!allowed||allowed.toLowerCase()!==email||!runtime.MINT_SETUP_TOKEN||!equal(String(parsed.setupCode||''),runtime.MINT_SETUP_TOKEN)))fail(403,'请使用管理员邮箱和正确的空间创建码');
+    const salt=random();
+    const passwordDigest=await passwordHash(password,salt);
+    const created=await db().prepare('INSERT INTO users(id,email,name,password,salt,settings) SELECT ?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM users)').bind('personal',email,name,passwordDigest,salt,JSON.stringify(defaultSettings)).run();
+    if(!created.meta.changes)fail(409,'网站已初始化，请登录');
+    await seedHabits();
+    return json({ok:true},200,{'Set-Cookie':await session('personal',req)});
+  }
+
+  const u=await mustUser(req);
+  if(op==='logout'){
+    const token=req.headers.get('cookie')?.match(/mint_session=([a-f0-9]{64})/)?.[1];
+    if(token)await db().prepare('DELETE FROM sessions WHERE token=?').bind(await hash(token)).run();
+    return json({ok:true},200,{'Set-Cookie':'mint_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'});
+  }
+  const b=parsed;
+  if(op==='record'){
+    validateRecord(b);
+    const id=b.id||crypto.randomUUID();
+    if(b.id){
+      const result=await db().prepare('UPDATE records SET kind=?,date=?,payload=?,revision=revision+1,updated=? WHERE id=? AND revision=?').bind(b.kind,b.date,JSON.stringify(b.data),new Date().toISOString(),id,b.revision).run();
+      if(!result.meta.changes)fail(409,'这条记录已在其他设备更新，请刷新后重试');
+    }else{
+      if(['sleep','meal'].includes(b.kind)&&await db().prepare('SELECT id FROM records WHERE kind=? AND date=?').bind(b.kind,b.date).first())fail(409,'这一天已有记录，请编辑原记录');
+      await db().prepare('INSERT INTO records(id,kind,date,payload,updated) VALUES(?,?,?,?,?)').bind(id,b.kind,b.date,JSON.stringify(b.data),new Date().toISOString()).run();
+    }
+    return json({id});
+  }
+  if(op==='check'){
+    const habit=await db().prepare('SELECT payload FROM habits WHERE id=?').bind(b.habitId).first<{payload:string}>();
+    if(!habit)fail(404,'习惯不存在');
+    const data=JSON.parse(habit.payload);
+    const previous=await db().prepare("SELECT id FROM records WHERE kind='check' AND date=? AND (json_extract(payload,'$.habitId')=? OR (json_extract(payload,'$.name')=? AND json_extract(payload,'$.category')=?)) LIMIT 1").bind(b.date,b.habitId,data.name,data.category).first<{id:string}>();
+    const id=previous?.id||'check:'+b.habitId+':'+b.date;
+    const record={id,revision:1,kind:'check',date:b.date,data:{habitId:b.habitId,name:data.name,category:data.category,minutes:data.minutes,complete:!!b.complete}} as LifeRecord;
+    validateRecord(record);
+    await db().prepare('INSERT INTO records(id,kind,date,payload,updated) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,revision=records.revision+1,updated=excluded.updated').bind(id,'check',b.date,JSON.stringify(record.data),new Date().toISOString()).run();
+    return json({ok:true});
+  }
+  if(op==='habit'){
+    validateHabit(b);
+    if(b.id){
+      const result=await db().prepare('UPDATE habits SET payload=?,revision=revision+1 WHERE id=? AND revision=?').bind(JSON.stringify(b),b.id,b.revision).run();
+      if(!result.meta.changes)fail(409,'习惯已在其他设备更新，请刷新');
+    }else{
+      b.id=crypto.randomUUID();
+      await db().prepare('INSERT INTO habits(id,payload) VALUES(?,?)').bind(b.id,JSON.stringify(b)).run();
+    }
+    return json({ok:true});
+  }
+  if(op==='settings'){
+    const s=b.settings;
+    if(!s||!Array.isArray(s.hidden)||s.hidden.some((x:unknown)=>!['sleep','study','meal','运动','清洁','每日 SOP'].includes(String(x)))||!Number.isFinite(s.sleepGoal)||s.sleepGoal<1||s.sleepGoal>24||!Number.isFinite(s.studyGoal)||s.studyGoal<1||s.studyGoal>1440||!/^([01]\d|2[0-3]):[0-5]\d$/.test(s.bedtime)||String(s.focus).length>2000)fail(400,'目标设置无效');
+    const result=await db().prepare('UPDATE users SET settings=?,name=?,revision=revision+1 WHERE id=? AND revision=?').bind(JSON.stringify(s),String(b.name||u.name).slice(0,40),u.id,b.revision).run();
+    if(!result.meta.changes)fail(409,'设置已在其他设备更新，请刷新');
+    return json({ok:true});
+  }
+  if(op==='import'){
+    if(!Array.isArray(b.records)||b.records.length>40)fail(400,'单次请求最多导入 40 条记录');
+    const existing=(await db().prepare('SELECT kind,date,payload FROM records').all()).results;
+    const key=(r:LifeRecord)=>r.kind+'|'+r.date+'|'+(r.kind==='study'?JSON.stringify(Object.fromEntries(Object.entries(r.data).sort(([a],[b])=>a.localeCompare(b)))):r.kind==='check'?String(r.data.name):'');
+    const known=new Set(existing.map(r=>key(unpack(r))));
+    const unique:LifeRecord[]=[];
+    let skipped=0;
+    for(const record of b.records){validateRecord(record);const k=key(record);if(known.has(k)){skipped++;continue}known.add(k);unique.push(record)}
+    if(unique.length)await db().batch(unique.map(record=>db().prepare('INSERT INTO records(id,kind,date,payload,updated) VALUES(?,?,?,?,?)').bind(crypto.randomUUID(),record.kind,record.date,JSON.stringify(record.data),new Date().toISOString())));
+    return json({imported:unique.length,skipped});
+  }
+  return json({error:'未找到'},404);
+})}
+
+export async function DELETE(req:Request){return guard(async()=>{
+  csrf(req);
+  await mustUser(req);
+  const [op,id]=parts(req);
+  if(op==='record'){
+    const record=await db().prepare('SELECT id FROM records WHERE id=?').bind(id).first();
+    if(!record)fail(404,'记录不存在');
+    await db().prepare('DELETE FROM records WHERE id=?').bind(id).run();
+    return json({ok:true});
+  }
+  return json({error:'未找到'},404);
+})}

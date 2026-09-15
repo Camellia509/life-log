@@ -49,6 +49,7 @@ next-env.d.ts
 /work/*
 !/work/api-test.mjs
 !/work/excel-test.mjs
+!/work/migration-test.py
 !/work/prepare-qa.mjs
 !/work/qa-reset.sql
 
