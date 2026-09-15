@@ -2,12 +2,13 @@
 
 ## 恢复点
 
-两个恢复点均位于被 Git 忽略的 `backups/`：
+恢复点均位于被 Git 忽略的 `backups/`：
 
 - `backups/stage0-baseline-20260914/`：阶段 0 的完整第一版本地基线。
 - `backups/stage1-pre-migration-20260914/`：阶段 1 删除表和字段之前再次建立的恢复点。
+- `backups/stage2-pre-bearer-20260915/`：阶段 2 增加设备会话字段之前建立的恢复点。
 
-每个恢复点包含：
+恢复点至少包含：
 
 - `wrangler-state.zip`：当时的完整 `.wrangler/state`。
 - `d1-baseline.sql`：实际本地 D1 SQLite 数据库的全量 SQL。
@@ -36,4 +37,6 @@
 3. 源库和恢复库逐表行数一致。
 4. 每张表规范化行内容的 SHA-256 一致。
 
-`scripts/verify-sql-backup.py` 已用于两个恢复点的独立恢复演练。
+`scripts/verify-sql-backup.py` 已用于这些恢复点的独立恢复演练。
+
+阶段 2 会话迁移是纯增量。只回滚代码时可保留新增列，阶段 1 的 `token/user_id/expires` 查询仍可工作；Bearer 登录设备需要重新登录。若要完全回到阶段 1 Schema，应在新目录导入阶段 2 前 SQL 并完成上述四项验证，不能直接对当前数据库执行反向删除字段。

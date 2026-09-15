@@ -139,6 +139,53 @@ with tempfile.TemporaryDirectory(prefix="mint-stage1-migration-") as temp:
     }
     assert "records_date" in index_sql
     assert "owner" not in index_sql["one_daily_record"]
+
+    single.executescript(migration_sql("0003_device_sessions.sql"))
+    single.commit()
+    session_columns = columns(single, "sessions")
+    assert {
+        "token",
+        "user_id",
+        "expires",
+        "id",
+        "device_id_hash",
+        "device_label",
+        "user_agent_hash",
+        "created_at",
+        "last_used_at",
+        "revoked_at",
+    } == session_columns
+    migrated_session = single.execute(
+        "SELECT token,user_id,expires,id,device_label,created_at,last_used_at "
+        "FROM sessions WHERE token='session-digest'"
+    ).fetchone()
+    assert migrated_session is not None
+    assert migrated_session[0:3] == ("session-digest", "user-0", 4102444800000)
+    assert len(migrated_session[3]) == 32
+    assert migrated_session[4] == "旧设备"
+    assert migrated_session[5] == migrated_session[6] == 4101840000000
+    single.execute(
+        "INSERT INTO sessions(token,user_id,expires,id,device_id_hash,device_label,"
+        "user_agent_hash,created_at,last_used_at) VALUES(?,?,?,?,?,?,?,?,?)",
+        (
+            "new-token-digest",
+            "user-0",
+            4102444800000,
+            "public-session-id",
+            "device-digest",
+            "Windows · Chrome",
+            "ua-digest",
+            100,
+            100,
+        ),
+    )
+    single.commit()
+    assert single.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    # Stage 1 code can still read and delete sessions by the original columns.
+    assert single.execute(
+        "SELECT user_id FROM sessions WHERE token=? AND expires>?",
+        ("new-token-digest", 0),
+    ).fetchone()[0] == "user-0"
     single.close()
 
     multiple = legacy_database(temp_path / "multiple.sqlite", users=2)
@@ -157,7 +204,7 @@ with tempfile.TemporaryDirectory(prefix="mint-stage1-migration-") as temp:
     multiple.close()
 
 report = {
-    "passed": 13,
+    "passed": 20,
     "checks": [
         "single-user migration completes",
         "only final five tables remain",
@@ -172,6 +219,13 @@ report = {
         "database integrity is ok",
         "single-user indexes created",
         "multi-user legacy database rejected before destructive changes",
+        "device session migration is additive",
+        "legacy session token retained",
+        "legacy session public id backfilled",
+        "legacy session timestamps backfilled",
+        "new device session metadata persists",
+        "stage 1 session queries remain compatible",
+        "post-migration database integrity is ok",
     ],
 }
 print(json.dumps(report, ensure_ascii=False, indent=2))
