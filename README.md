@@ -1,34 +1,24 @@
 # 薄荷溪居
 
-“薄荷溪居”是个人长期使用的生活与学习记录网页。阶段 2 已把 API 拆成独立 Cloudflare Worker，并将登录改为 Bearer 设备会话。邀请、成员、亲友分享和全部用户图片功能均已删除。当前仍只在本地运行，尚未部署或连接任何云端资源。
+“薄荷溪居”是个人长期使用的生活与学习记录网页。阶段 3 已将前端改为纯 React + Vite 静态应用，可构建为 GitHub Pages 文件；后端仍是独立 Cloudflare Worker + D1。当前没有部署或连接任何云端资源。
 
-## 现在可用
+## 功能
 
-- 植物屋顶小屋、溪流、薄荷与奶黄花束水彩界面。
-- 单一个人账号的邮箱与密码登录；首次创建后初始化入口永久关闭。
-- 睡眠、学习、餐饮记录，运动、清洁和每日 SOP 打卡。
-- 21 项运动与清洁预设；可编辑、停用并新增自定义项目。
-- 按月统计与日期筛选；跨月历史保存。
-- 月度重点和首页模块显示偏好。
-- Excel 导入预览、去重、分批保存、当前月导出和全部导出。
+- 水彩花束、植物屋顶小屋、溪流与浅薄荷绿、暖黄色界面。
+- 单一个人账号，Bearer 设备会话，关闭浏览器后保持登录。
+- 睡眠、学习、餐饮、运动、清洁和每日 SOP。
+- 月度统计、日期筛选、月度重点和自定义习惯。
+- Excel 导入预览、去重、当前月导出和全部导出。
+- 登录设备列表、最近使用时间和单独撤销。
 
-网页不提供用户图片上传、查看或删除入口。花束、小屋和溪流是随前端源码发布的静态界面素材，不进入个人数据库。
+网页不提供用户图片上传、分享、邀请或多人功能。界面插画随静态前端发布，不进入个人数据库。
 
-## 本机使用
+## 本地开发
 
-本地开发需要同时运行前端和 Worker。前端地址是 <http://localhost:5173/>，API 地址是 <http://localhost:8787/>。这些地址仅指向当前设备，服务停止后浏览器无法访问，但本地记录仍保留。
-
-首次点击“创建空间”，填写昵称、邮箱和至少 12 位密码。数据库只保存密码派生值，不保存明文密码。创建成功后只能登录已有账号，不能再注册第二个账号。当前版本没有邮件找回密码。
-
-本地数据位于项目的 `.wrangler/state`，不要删除这个目录。建议定期使用“导出全部记录”保存 Excel 副本。
-
-## 源码安装与运行
-
-需要 Node.js 22.13 或更新版本：
+需要 Node.js 22.13 或更新版本。先启动本地 Worker：
 
 ```powershell
 npm ci
-npm run build
 npm run worker:db:init
 npm run worker:dev
 ```
@@ -39,37 +29,70 @@ npm run worker:dev
 npm run dev
 ```
 
-使用服务输出的 Local URL。Windows 的 npm 命令包装若异常，可运行 `node scripts/run-framework.mjs dev` 或 `node scripts/run-framework.mjs build`。
+- 前端：<http://localhost:5173/life-log/>
+- Worker：<http://localhost:8787/>
 
-## 统计口径
+开发环境默认连接本地 Worker，也可在被 Git 忽略的 `.env.local` 中设置：
 
-- 睡眠按起床日记录，支持跨午夜；相同入睡和起床时间不作为 24 小时睡眠。
-- 平均睡眠只计算有完整时间的记录；不熬夜按个人设置的参考时间计算。
-- 学习投入为实际分钟合计，计划时间和实际时间分别保留。
-- 食堂用餐率只统计明确填写“是/否”的日期。
-- 单餐平均时长只统计填写了分钟数的午餐和晚餐。
-- 运动次数按项目完成记录统计，一天完成多个项目分别计次。
-- 清洁完成率按启用项目的月目标计算；没有固定目标时按周期计算。
-- 每两周项目以 2026-01-05 所在周为起点；每月 29–31 日在短月份落到月底。
+```text
+VITE_API_BASE_URL=http://localhost:8787
+BASE_PATH=/life-log/
+```
 
-前端通过 `VITE_LIFE_API_BASE_URL` 直接调用 Worker；Worker 通过精确的 `ALLOWED_ORIGINS` 白名单允许本地前端。生产地址将在阶段 3 确定，配置缺失或包含 `*` 时业务 API 关闭访问。
+`VITE_API_BASE_URL` 只填写 Worker Origin，客户端会自动添加 `/api/life`。它是公开构建变量，不能写入密码、Bearer token 或 Cloudflare 凭据。
 
-## 阶段 2 验证
+## 模拟 GitHub Pages
 
-- TypeScript 类型检查和生产构建通过。
-- 阶段 1 的 14 组 API 回归和 5 组 Bearer/设备会话/CORS 增量检查通过。
-- Excel 导入导出与日期计算的 9 组测试通过。
-- Schema 迁移的 20 项检查通过，包括已有会话回填与阶段 1 查询兼容。
-- 两进程浏览器联调通过：Bearer 登录、刷新后保持登录、睡眠记录、清洁打卡、统计、月度重点，以及退出时清除本地会话。
+项目确定发布到：
 
-## 本阶段边界
+```text
+https://Camellia509.github.io/life-log/
+```
 
-阶段 2 只完成独立 Worker、Bearer 设备会话、严格 CORS 和当前 Next 前端的直接接入。静态前端、Vite `base`、GitHub Pages、GitHub Actions 和 PWA 均留到阶段 3 以后。
+本地生成同样子路径的静态文件：
 
-迁移、恢复和阶段说明见 [架构说明](docs/ARCHITECTURE.md)、[数据迁移说明](docs/DATA_MIGRATION.md)与[恢复说明](docs/RECOVERY.md)。
+```powershell
+$env:BASE_PATH="/life-log/"
+$env:VITE_API_BASE_URL="http://localhost:8787"
+npm run build
+npm run preview
+```
+
+访问 <http://localhost:4173/life-log/#/>。栏目使用 `#/records`、`#/habits` 和 `#/settings`，刷新时 GitHub Pages 始终读取 `/life-log/`，不会请求不存在的服务器路由。
+
+生产构建缺少 `VITE_API_BASE_URL` 时仍能生成静态文件，但页面会明确提示 API 未配置，不会回退到本机地址。正式 Worker URL 留到阶段 5 部署后填写。
+
+## GitHub Pages 工作流
+
+`.github/workflows/deploy.yml` 当前只有 `workflow_dispatch`，不会因提交自动运行。本阶段不推送、不启用 Pages、不执行部署。
+
+未来需要在公开仓库 `Camellia509/life-log` 设置 Actions Variables：
+
+| Variable | 值 |
+| --- | --- |
+| `BASE_PATH` | `/life-log/` |
+| `VITE_API_BASE_URL` | 阶段 5 得到的 Worker Origin |
+
+不需要自定义 GitHub Secret。Pages 使用 Actions 自动提供的 `GITHUB_TOKEN`。Cloudflare 和备份凭据不属于前端工作流。
+
+Worker 的 `ALLOWED_ORIGINS` 已包含本地开发、静态预览和规范化的小写 Origin `https://camellia509.github.io`。域名不区分大小写，Origin 不含 `/life-log/`。配置缺失、包含 `*` 或格式非法时，Worker 关闭业务访问。
+
+## 检查
+
+```powershell
+npm run typecheck
+npm run worker:typecheck
+npm run lint
+npm run worker:dry-run
+npm test
+npm run build
+npm run test:static
+```
+
+静态构建输出到被 Git 忽略的 `dist/`：顶层是 `index.html`、favicon 和两张水彩素材，编译后的 JavaScript/CSS 位于 `dist/assets/`。没有服务端 bundle、数据库或个人数据。
+
+## 数据与恢复
+
+本地 D1 位于 `.wrangler/state`，不要删除。建议定期使用“导出全部记录”保存 Excel 副本。迁移、恢复和架构边界见 [架构说明](docs/ARCHITECTURE.md)、[数据迁移说明](docs/DATA_MIGRATION.md)与[恢复说明](docs/RECOVERY.md)。
 
 目标仍是免费、跨设备公网访问、尽力覆盖中国大陆网络，不承诺大陆稳定性。不购买域名，不绑定付款方式，不启用付费计划或按量计费。
-
-## 插画
-
-花束使用用户提供的参考图。风景插画是浅薄荷绿、奶油黄与雾蓝水彩，包含植物屋顶小屋、蜿蜒溪流、玫瑰与兰花；画面右侧构图，左侧留白。

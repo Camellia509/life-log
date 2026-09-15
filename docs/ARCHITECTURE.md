@@ -1,55 +1,70 @@
 # 薄荷溪居架构说明
 
-## 阶段 2 当前架构
+## 阶段 3 当前架构
 
-当前版本由两个本地进程组成：
+前端是纯 React + Vite 静态应用：
 
-- Vinext/React 前端运行在 `http://localhost:5173`。
-- 标准 Cloudflare Worker 运行在 `http://localhost:8787`，通过 `DB` binding 使用本地 D1。
+- 开发服务器：`http://localhost:5173/life-log/`。
+- 静态预览：`http://localhost:4173/life-log/`。
+- 目标 Pages：`https://camellia509.github.io/life-log/`。
+- Vite `base`：`/life-log/`。
+- 页面路由：Hash 路由 `#/`、`#/records`、`#/habits`、`#/settings`。
 
-浏览器读取 `VITE_LIFE_API_BASE_URL` 后直接跨域调用 Worker。Next API 路由和 Cookie 后端已经删除，不存在正式或隐藏的转发层。
+构建产物只有 `dist/index.html`、静态素材和哈希命名的浏览器资源。Next、Vinext、React Server Components、Sites 托管适配及前端 D1 binding 已移除。不存在 API 转发层或服务端渲染入口。
 
-数据模型只有一个个人账号：
+浏览器读取 `VITE_API_BASE_URL`，直接调用 `${VITE_API_BASE_URL}/api/life/*`。生产变量尚未填写；缺失时页面显示配置错误，不会连接 localhost。统计和 Excel 生成继续在浏览器完成。
 
-- `users` 保存唯一账号的登录资料、个人设置、月度重点和修订号。
-- `sessions` 只保存 Bearer token 的 SHA-256 摘要、设备摘要、可读设备名称、UA 摘要、创建/最近使用/到期/撤销时间。
-- `records` 保存睡眠、学习、餐饮和习惯打卡记录。
-- `habits` 保存运动、清洁、每日 SOP 和自定义项目。
-- `attempts` 保存登录尝试限流状态。
+后端保持阶段 2 的独立 Cloudflare Worker：
 
-邀请、成员角色、亲友分享、用户所有权字段和用户图片功能均已移除。水彩花束、植物小屋和溪流是静态界面素材。
+- `users`：唯一账号、设置和月度重点。
+- `sessions`：Bearer token 摘要、设备摘要、设备名称、创建/最近使用/到期/撤销时间。
+- `records`：睡眠、学习、餐饮和习惯打卡。
+- `habits`：运动、清洁、每日 SOP 和自定义项目。
+- `attempts`：登录失败限流。
 
-原始 Bearer token 只返回给登录设备，并保存在该浏览器的 `localStorage`。退出登录会撤销 Worker 会话并清除本地 token；`401` 也会清除本地 token。统计和 Excel 文件生成继续在浏览器端完成。
+“个人设置”通过已有 `GET /sessions` 和 `DELETE /sessions/:id` 展示并撤销设备会话，没有新增 Worker 业务接口。
 
-Worker 对所有 `/api/life/*` 请求先执行精确 Origin 校验。`ALLOWED_ORIGINS` 缺失、包含 `*` 或包含非法项目时关闭业务访问。合法响应返回精确 Origin 和 `Vary: Origin`，不使用 Cookie 或 `Access-Control-Allow-Credentials`。
+Worker 的精确 Origin 白名单包含：
 
-本阶段没有创建、修改或连接任何云端资源。
+- `http://localhost:5173`
+- `http://127.0.0.1:5173`
+- `http://localhost:4173`
+- `http://127.0.0.1:4173`
+- `https://camellia509.github.io`
 
-## 已确认的目标架构
+GitHub Pages Origin 不含仓库路径。`ALLOWED_ORIGINS` 缺失、含 `*` 或有非法项目时继续关闭业务访问，不使用 Cookie 或 `Access-Control-Allow-Credentials`。
 
-- 前端：GitHub Pages 上的纯静态 React 应用。
-- 后端：Cloudflare Workers Free。
-- 数据库：Cloudflare D1 Free。
-- 备份：GitHub Actions 每天导出 D1，备份保存在独立私有仓库；网页继续提供手动导出。
-- 用户：一个个人账号，可在自己的手机和电脑登录。
-- 网络目标：免费、跨设备公网访问、尽力覆盖中国大陆网络，不承诺大陆稳定性。
-- 费用边界：不绑定付款方式，不启用付费计划，不接受按量计费。
+邀请、成员角色、亲友分享、用户所有权字段和用户图片功能均已移除。水彩花束、植物小屋和溪流只是静态界面素材。
 
-## 阶段 3 接手项
+## GitHub Actions 边界
 
-- 将当前 Next/Vinext 页面改成 GitHub Pages 可发布的静态前端。
-- 设置 Vite `base` 和正式 `VITE_LIFE_API_BASE_URL`。
-- 将准确的 GitHub Pages Origin 写入 Worker `ALLOWED_ORIGINS`；Origin 不含仓库路径。
-- 增加设备会话管理界面，复用阶段 2 的 `GET /sessions` 与 `DELETE /sessions/:id`。
-- 阶段 2 的 Worker API、Bearer 客户端和业务行为保持不变。
+`.github/workflows/deploy.yml` 包含静态构建、检查、Pages artifact 和部署 job，但目前只有手动 `workflow_dispatch` 入口。本阶段没有推送代码、开启 Pages 或运行工作流。
 
-## 修订后的完整阶段
+仓库 Variables：
+
+- `BASE_PATH=/life-log/`
+- `VITE_API_BASE_URL`：阶段 5 部署 Worker 后填写。
+
+前端工作流不需要自定义 Secrets。阶段 4 的 D1 备份凭据与阶段 5 的 Worker 部署凭据分别设计，不能暴露给浏览器构建。
+
+## 阶段 4 接手项
+
+1. 设计 GitHub Actions 每日 D1 导出。
+2. 选择备份加密方式和独立私有备份仓库。
+3. 设计备份保留周期和安全清理。
+4. 校验记录、习惯、设置、月度重点和统计结果。
+5. 定期恢复到新 D1，记录可审计结果。
+6. 完善网页手动完整导出和恢复说明。
+
+阶段 4 不恢复图片、多人、邀请或分享。阶段 5 才部署 Worker、填写正式 `VITE_API_BASE_URL`、启用 Pages、确认额度保护并决定是否加入 PWA。
+
+## 完整阶段
 
 0. 建立 Git 基线、本地状态备份、SQL 导出和恢复演练。
 1. 删除多人、邀请、分享和全部用户图片功能，迁移为单用户数据模型。
-2. 将 API 拆分为独立 Cloudflare Worker，完成单用户认证与严格来源白名单。
-3. 将前端改为 GitHub Pages 可发布的静态应用，保持手机和电脑响应式体验。
-4. 增加 GitHub Actions 每日 D1 加密备份、手动完整导出和恢复演练。
-5. 增加 Free 方案部署流程、额度保护、运维与灾难恢复说明。
+2. 将 API 拆分为独立 Cloudflare Worker，完成 Bearer 设备会话与严格来源白名单。
+3. 将前端改为 GitHub Pages 可发布的纯静态应用，增加 Hash 路由和设备会话界面。
+4. 增加 GitHub Actions 每日 D1 备份、手动完整导出和恢复演练。
+5. 执行 Free 方案部署，填写生产地址，配置额度保护、运维和灾难恢复。
 
-每一阶段单独提交、单独验收；上一阶段通过后才进入下一阶段。
+每个阶段独立提交和验收。目标是免费、跨设备公网访问、尽力覆盖中国大陆网络，不承诺大陆稳定性。
