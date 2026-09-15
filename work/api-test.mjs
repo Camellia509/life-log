@@ -12,7 +12,7 @@ const miniflare=new Miniflare({
   modules:true,
   scriptPath:path.resolve('work/worker-dry-run/index.js'),
   compatibilityDate:'2026-05-22',
-  bindings:{ALLOWED_ORIGINS:'http://localhost:5173,http://127.0.0.1:5173',MINT_LOCAL_SETUP:'1'},
+  bindings:{ALLOWED_ORIGINS:'http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173,https://camellia509.github.io',MINT_LOCAL_SETUP:'1'},
   d1Databases:{DB:'mint-stage2-qa'},
   port:0,
 });
@@ -58,6 +58,12 @@ assert.equal(preflight.headers.get('access-control-allow-credentials'),null);
 assert.match(preflight.headers.get('access-control-allow-methods'),/DELETE/);
 assert.match(preflight.headers.get('access-control-allow-headers'),/Authorization/);
 reports.push('CORS preflight permits only the configured origin and bearer headers');
+
+for(const origin of ['http://localhost:4173','http://127.0.0.1:4173','https://camellia509.github.io']){
+  const response=await fetch(base+'/api/life/session',{headers:{Origin:origin}});
+  assert.equal(response.status,200);
+  assert.equal(response.headers.get('access-control-allow-origin'),origin);
+}
 
 const illegal=await fetch(base+'/api/life/session',{headers:{Origin:'https://other.invalid'}});
 assert.equal(illegal.status,403);
