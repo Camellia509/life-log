@@ -17,10 +17,10 @@
 3. 用 `BACKUP_AGE_RECIPIENT` 公钥加密 SQL 与校验清单，并为两个密文生成 SHA-256 文件。
 4. 再次校验密文 SHA-256。
 5. 只有以上步骤成功后，才合并旧快照、执行保留策略并创建新快照提交。
-6. 用 `--force-with-lease` 更新私有仓库的 `backups` 分支；若远端分支在运行期间改变，推送失败而不会覆盖新内容。
+6. 创建不带父提交的快照，使已淘汰密文不再被分支历史引用；再用 `--force-with-lease` 更新 `BACKUP_BRANCH` 指定的私有分支。若远端分支在运行期间改变，推送失败而不会覆盖新内容。
 7. 无论成功失败，都清理 runner 中的明文 SQL、临时 Wrangler 配置和工具目录。
 
-默认保留最近 7 个每日点、4 个不同周的周点和 6 个不同月的月点，三类取并集。同一日期只有 SQL 密文、清单密文和 SHA-256 文件三者齐全时才参与清理。以后可通过 `DAILY_KEEP`、`WEEKLY_KEEP`、`MONTHLY_KEEP` 调整。工作流同时支持 GitHub 页面中的 **Run workflow** 手动触发。
+默认保留最近 7 个每日点、4 个不同周的周点和 6 个不同月的月点，三类取并集。同一日期只有 SQL 密文、清单密文和 SHA-256 文件三者齐全时才参与清理。可通过 `BACKUP_KEEP_DAILY`、`BACKUP_KEEP_WEEKLY`、`BACKUP_KEEP_MONTHLY` 调整，并通过 `BACKUP_BRANCH` 指定快照分支。工作流同时支持 GitHub 页面中的 **Run workflow** 手动触发。
 
 ## 阶段 5 才配置的内容
 
@@ -40,9 +40,10 @@
 | `D1_DATABASE_NAME` | 阶段 5 创建的数据库名 |
 | `LIFE_LOG_SOURCE_REPOSITORY` | `Camellia509/life-log` |
 | `LIFE_LOG_SOURCE_REF` | 经审核的固定 tag 或 commit SHA |
-| `DAILY_KEEP` | `7`，可省略 |
-| `WEEKLY_KEEP` | `4`，可省略 |
-| `MONTHLY_KEEP` | `6`，可省略 |
+| `BACKUP_BRANCH` | `backups` |
+| `BACKUP_KEEP_DAILY` | `7`，可省略 |
+| `BACKUP_KEEP_WEEKLY` | `4`，可省略 |
+| `BACKUP_KEEP_MONTHLY` | `6`，可省略 |
 
 模板只使用私有仓库自身的 `GITHUB_TOKEN` 写同仓库，不需要跨仓库 deploy key。阶段 4 没有创建或配置上述项目。
 

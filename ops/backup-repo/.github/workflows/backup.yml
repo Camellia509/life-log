@@ -46,6 +46,10 @@ jobs:
           D1_DATABASE_NAME: ${{ vars.D1_DATABASE_NAME }}
           SOURCE_REPOSITORY: ${{ vars.LIFE_LOG_SOURCE_REPOSITORY }}
           SOURCE_REF: ${{ vars.LIFE_LOG_SOURCE_REF }}
+          BACKUP_BRANCH: ${{ vars.BACKUP_BRANCH || 'backups' }}
+          BACKUP_KEEP_DAILY: ${{ vars.BACKUP_KEEP_DAILY || '7' }}
+          BACKUP_KEEP_WEEKLY: ${{ vars.BACKUP_KEEP_WEEKLY || '4' }}
+          BACKUP_KEEP_MONTHLY: ${{ vars.BACKUP_KEEP_MONTHLY || '6' }}
         run: |
           test -n "$CF_API_TOKEN"
           test -n "$CF_ACCOUNT_ID"
@@ -55,6 +59,11 @@ jobs:
           test -n "$SOURCE_REPOSITORY"
           test -n "$SOURCE_REF"
           case "$AGE_RECIPIENT" in age1*) ;; *) exit 1 ;; esac
+          git check-ref-format --branch "$BACKUP_BRANCH"
+          for value in "$BACKUP_KEEP_DAILY" "$BACKUP_KEEP_WEEKLY" "$BACKUP_KEEP_MONTHLY"; do
+            case "$value" in ''|*[!0-9]*) exit 1 ;; esac
+            test "$value" -gt 0
+          done
 
       - name: Install source dependencies
         working-directory: source
@@ -98,21 +107,24 @@ jobs:
 
       - name: Build retained snapshot after validation
         env:
-          DAILY_KEEP: ${{ vars.DAILY_KEEP || '7' }}
-          WEEKLY_KEEP: ${{ vars.WEEKLY_KEEP || '4' }}
-          MONTHLY_KEEP: ${{ vars.MONTHLY_KEEP || '6' }}
+          BACKUP_BRANCH: ${{ vars.BACKUP_BRANCH || 'backups' }}
+          BACKUP_KEEP_DAILY: ${{ vars.BACKUP_KEEP_DAILY || '7' }}
+          BACKUP_KEEP_WEEKLY: ${{ vars.BACKUP_KEEP_WEEKLY || '4' }}
+          BACKUP_KEEP_MONTHLY: ${{ vars.BACKUP_KEEP_MONTHLY || '6' }}
         run: |
-          git -C backup-store fetch origin backups || true
-          EXPECTED_SHA="$(git -C backup-store rev-parse refs/remotes/origin/backups 2>/dev/null || true)"
+          git -C backup-store fetch origin "refs/heads/$BACKUP_BRANCH:refs/remotes/origin/$BACKUP_BRANCH" || true
+          EXPECTED_SHA="$(git -C backup-store rev-parse "refs/remotes/origin/$BACKUP_BRANCH" 2>/dev/null || true)"
           mkdir -p "$RUNNER_TEMP/snapshot"
           if test -n "$EXPECTED_SHA"; then
             git -C backup-store archive "$EXPECTED_SHA" | tar -x -C "$RUNNER_TEMP/snapshot"
           fi
           cp "$RUNNER_TEMP/new-backup"/* "$RUNNER_TEMP/snapshot/"
-          node source/scripts/backup/retention.mjs --dir="$RUNNER_TEMP/snapshot" --daily="$DAILY_KEEP" --weekly="$WEEKLY_KEEP" --monthly="$MONTHLY_KEEP"
+          node source/scripts/backup/retention.mjs --dir="$RUNNER_TEMP/snapshot" --daily="$BACKUP_KEEP_DAILY" --weekly="$BACKUP_KEEP_WEEKLY" --monthly="$BACKUP_KEEP_MONTHLY"
           printf '%s' "$EXPECTED_SHA" > "$RUNNER_TEMP/expected-sha"
 
       - name: Publish snapshot with lease protection
+        env:
+          BACKUP_BRANCH: ${{ vars.BACKUP_BRANCH || 'backups' }}
         run: |
           EXPECTED_SHA="$(cat "$RUNNER_TEMP/expected-sha")"
           export GIT_INDEX_FILE="$RUNNER_TEMP/backup-index"
@@ -121,14 +133,13 @@ jobs:
           git -C backup-store read-tree --empty
           git -C backup-store --work-tree="$RUNNER_TEMP/snapshot" add -A
           TREE="$(git -C backup-store write-tree)"
+          COMMIT="$(printf 'Encrypted D1 backup %s\n' "$(TZ=Asia/Shanghai date +%F)" | git -C backup-store commit-tree "$TREE")"
           if test -n "$EXPECTED_SHA"; then
-            COMMIT="$(printf 'Encrypted D1 backup %s\n' "$(TZ=Asia/Shanghai date +%F)" | git -C backup-store commit-tree "$TREE" -p "$EXPECTED_SHA")"
-            LEASE="--force-with-lease=refs/heads/backups:$EXPECTED_SHA"
+            LEASE="--force-with-lease=refs/heads/$BACKUP_BRANCH:$EXPECTED_SHA"
           else
-            COMMIT="$(printf 'Encrypted D1 backup %s\n' "$(TZ=Asia/Shanghai date +%F)" | git -C backup-store commit-tree "$TREE")"
-            LEASE="--force-with-lease=refs/heads/backups:"
+            LEASE="--force-with-lease=refs/heads/$BACKUP_BRANCH:"
           fi
-          git -C backup-store push origin "$COMMIT:refs/heads/backups" "$LEASE"
+          git -C backup-store push origin "$COMMIT:refs/heads/$BACKUP_BRANCH" "$LEASE"
 
       - name: Remove plaintext and temporary credentials
         if: always()
