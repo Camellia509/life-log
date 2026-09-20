@@ -1,8 +1,18 @@
 import {spawnSync} from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
-const command=process.platform==='win32'?'py':'python3';
-const args=process.platform==='win32'?['-3','work/migration-test.py']:['work/migration-test.py'];
-const result=spawnSync(command,args,{stdio:'inherit'});
+const candidates=process.platform==='win32'?
+  [[process.env.PYTHON,[]],[path.join(os.homedir(),'.cache','codex-runtimes','codex-primary-runtime','dependencies','python','python.exe'),[]],['py',['-3']],['python',[]]]:
+  [[process.env.PYTHON,[]],['python3',[]],['python',[]]];
+const selected=candidates.find(([command,args])=>{
+  if(!command||(path.isAbsolute(command)&&!fs.existsSync(command)))return false;
+  return spawnSync(command,[...args,'-c','import sqlite3'],{stdio:'ignore'}).status===0;
+});
+if(!selected){console.error('No Python runtime with sqlite3 found');process.exit(1)}
+const [command,prefix]=selected;
+const result=spawnSync(command,[...prefix,'work/migration-test.py'],{stdio:'inherit'});
 
 if(result.error){
   console.error(`Unable to start ${command}: ${result.error.message}`);
