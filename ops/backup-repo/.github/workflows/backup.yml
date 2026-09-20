@@ -1,0 +1,135 @@
+name: Encrypted D1 backup
+
+on:
+  schedule:
+    - cron: "17 18 * * *" # 02:17 Asia/Shanghai (UTC+8)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: d1-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out private backup repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: backup-store
+          fetch-depth: 0
+
+      - name: Check out pinned life-log source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ vars.LIFE_LOG_SOURCE_REPOSITORY }}
+          ref: ${{ vars.LIFE_LOG_SOURCE_REF }}
+          path: source
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: source/package-lock.json
+
+      - name: Validate configuration
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
+          AGE_RECIPIENT: ${{ secrets.BACKUP_AGE_RECIPIENT }}
+          D1_DATABASE_NAME: ${{ vars.D1_DATABASE_NAME }}
+          SOURCE_REPOSITORY: ${{ vars.LIFE_LOG_SOURCE_REPOSITORY }}
+          SOURCE_REF: ${{ vars.LIFE_LOG_SOURCE_REF }}
+        run: |
+          test -n "$CF_API_TOKEN"
+          test -n "$CF_ACCOUNT_ID"
+          test -n "$D1_DATABASE_ID"
+          test -n "$AGE_RECIPIENT"
+          test -n "$D1_DATABASE_NAME"
+          test -n "$SOURCE_REPOSITORY"
+          test -n "$SOURCE_REF"
+          case "$AGE_RECIPIENT" in age1*) ;; *) exit 1 ;; esac
+
+      - name: Install source dependencies
+        working-directory: source
+        run: npm ci
+
+      - name: Export remote D1 into temporary staging
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
+          D1_DATABASE_NAME: ${{ vars.D1_DATABASE_NAME }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/new-backup"
+          chmod 700 "$RUNNER_TEMP/new-backup"
+          cat > "$RUNNER_TEMP/wrangler-backup.toml" <<EOF
+          name = "life-log-backup"
+          compatibility_date = "2026-09-20"
+          [[d1_databases]]
+          binding = "DB"
+          database_name = "$D1_DATABASE_NAME"
+          database_id = "$D1_DATABASE_ID"
+          EOF
+          cd source
+          npx wrangler d1 export "$D1_DATABASE_NAME" --remote --output "$RUNNER_TEMP/new-backup/export.sql" --config "$RUNNER_TEMP/wrangler-backup.toml"
+
+      - name: Verify, encrypt, and checksum new backup
+        env:
+          BACKUP_AGE_RECIPIENT: ${{ secrets.BACKUP_AGE_RECIPIENT }}
+          MINT_AGE_DIR: ${{ runner.temp }}/age
+        run: |
+          DATE="$(TZ=Asia/Shanghai date +%F)"
+          python3 source/scripts/verify-sql-backup.py --sql "$RUNNER_TEMP/new-backup/export.sql" --backup-dir "$RUNNER_TEMP/verification"
+          AGE_JSON="$(node source/scripts/backup/install-age.mjs)"
+          AGE_BIN="$(node -e 'console.log(JSON.parse(process.argv[1]).binary)' "$AGE_JSON")"
+          "$AGE_BIN" -r "$BACKUP_AGE_RECIPIENT" -o "$RUNNER_TEMP/new-backup/backup-$DATE.sql.age" "$RUNNER_TEMP/new-backup/export.sql"
+          "$AGE_BIN" -r "$BACKUP_AGE_RECIPIENT" -o "$RUNNER_TEMP/new-backup/manifest-$DATE.json.age" "$RUNNER_TEMP/verification/restore-verification.json"
+          cd "$RUNNER_TEMP/new-backup"
+          sha256sum "backup-$DATE.sql.age" "manifest-$DATE.json.age" > "backup-$DATE.sha256"
+          sha256sum --check "backup-$DATE.sha256"
+          rm -f export.sql
+
+      - name: Build retained snapshot after validation
+        env:
+          DAILY_KEEP: ${{ vars.DAILY_KEEP || '7' }}
+          WEEKLY_KEEP: ${{ vars.WEEKLY_KEEP || '4' }}
+          MONTHLY_KEEP: ${{ vars.MONTHLY_KEEP || '6' }}
+        run: |
+          git -C backup-store fetch origin backups || true
+          EXPECTED_SHA="$(git -C backup-store rev-parse refs/remotes/origin/backups 2>/dev/null || true)"
+          mkdir -p "$RUNNER_TEMP/snapshot"
+          if test -n "$EXPECTED_SHA"; then
+            git -C backup-store archive "$EXPECTED_SHA" | tar -x -C "$RUNNER_TEMP/snapshot"
+          fi
+          cp "$RUNNER_TEMP/new-backup"/* "$RUNNER_TEMP/snapshot/"
+          node source/scripts/backup/retention.mjs --dir="$RUNNER_TEMP/snapshot" --daily="$DAILY_KEEP" --weekly="$WEEKLY_KEEP" --monthly="$MONTHLY_KEEP"
+          printf '%s' "$EXPECTED_SHA" > "$RUNNER_TEMP/expected-sha"
+
+      - name: Publish snapshot with lease protection
+        run: |
+          EXPECTED_SHA="$(cat "$RUNNER_TEMP/expected-sha")"
+          export GIT_INDEX_FILE="$RUNNER_TEMP/backup-index"
+          git -C backup-store config user.name "github-actions[bot]"
+          git -C backup-store config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C backup-store read-tree --empty
+          git -C backup-store --work-tree="$RUNNER_TEMP/snapshot" add -A
+          TREE="$(git -C backup-store write-tree)"
+          if test -n "$EXPECTED_SHA"; then
+            COMMIT="$(printf 'Encrypted D1 backup %s\n' "$(TZ=Asia/Shanghai date +%F)" | git -C backup-store commit-tree "$TREE" -p "$EXPECTED_SHA")"
+            LEASE="--force-with-lease=refs/heads/backups:$EXPECTED_SHA"
+          else
+            COMMIT="$(printf 'Encrypted D1 backup %s\n' "$(TZ=Asia/Shanghai date +%F)" | git -C backup-store commit-tree "$TREE")"
+            LEASE="--force-with-lease=refs/heads/backups:"
+          fi
+          git -C backup-store push origin "$COMMIT:refs/heads/backups" "$LEASE"
+
+      - name: Remove plaintext and temporary credentials
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/new-backup" "$RUNNER_TEMP/verification" "$RUNNER_TEMP/wrangler-backup.toml" "$RUNNER_TEMP/age" "$RUNNER_TEMP/snapshot" "$RUNNER_TEMP/backup-index"

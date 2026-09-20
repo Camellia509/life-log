@@ -11,7 +11,7 @@
     "preview": "vite preview --host 127.0.0.1 --port 4173",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "test": "npm run test:api && npm run test:excel && npm run test:migration",
+    "test": "npm run test:api && npm run test:excel && npm run test:migration && npm run test:full-export && npm run test:backup",
     "worker:db:init": "node scripts/init-worker-local.mjs",
     "worker:dev": "node scripts/run-worker-local.mjs",
     "worker:typecheck": "tsc -p worker/tsconfig.json",
@@ -20,6 +20,9 @@
     "test:api": "node work/api-test.mjs",
     "test:excel": "node work/excel-test.mjs",
     "test:migration": "node scripts/run-migration-tests.mjs",
+    "test:full-export": "node work/full-export-test.mjs",
+    "test:backup": "node work/backup-retention-test.mjs && node work/backup-workflow-test.mjs",
+    "backup:rehearse": "node scripts/backup/rehearse-local.mjs",
     "test:static": "node work/static-build-test.mjs"
   },
   "dependencies": {
