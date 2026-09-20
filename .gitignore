@@ -51,6 +51,9 @@ next-env.d.ts
 !/work/excel-test.mjs
 !/work/migration-test.py
 !/work/static-build-test.mjs
+!/work/full-export-test.mjs
+!/work/backup-retention-test.mjs
+!/work/backup-workflow-test.mjs
 !/work/prepare-qa.mjs
 !/work/qa-reset.sql
 

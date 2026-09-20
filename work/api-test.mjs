@@ -86,6 +86,7 @@ const anonymous=client();
 const invalidToken=client('a'.repeat(64));
 
 await anonymous.request('records','GET',undefined,401);
+await anonymous.request('export','GET',undefined,401);
 reports.push('unauthenticated access denied');
 
 await invalidToken.request('records','GET',undefined,401);
@@ -179,6 +180,18 @@ assert.ok(sessions.every(session=>session.deviceLabel&&session.expiresAt>session
 const secondSession=sessions.find(session=>!session.current);
 await owner.request('sessions/'+secondSession.id,'DELETE');
 await deviceTwo.request('records','GET',undefined,401);
+const fullExport=await owner.request('export');
+assert.equal(fullExport.format,'mint-creek-full-export');
+assert.equal(fullExport.version,1);
+assert.equal(fullExport.account.email,'owner@mint-qa.invalid');
+assert.equal(fullExport.settings.focusByMonth['2026-09'],'完成阶段 2 验收');
+assert.equal(fullExport.records.length,(await owner.request('records')).length);
+assert.equal(fullExport.habits.length,(await owner.request('habits')).length);
+assert.ok(fullExport.sessions.some(session=>session.status==='revoked'));
+const exportKeys=[];
+const collectKeys=value=>{if(Array.isArray(value))value.forEach(collectKeys);else if(value&&typeof value==='object')for(const [key,item] of Object.entries(value)){exportKeys.push(key);collectKeys(item)}};
+collectKeys(fullExport);
+for(const forbidden of ['password','salt','token','device_id_hash','user_agent_hash','attempts'])assert.equal(exportKeys.includes(forbidden),false,`full export leaked ${forbidden}`);
 reports.push('device sessions can be listed and individually revoked');
 
 const currentSession=(await owner.request('sessions')).find(session=>session.current);

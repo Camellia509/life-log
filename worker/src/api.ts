@@ -27,6 +27,22 @@ export function handleApi(request:Request,env:Env){return guard(async()=>{
       const rows=await db(env).prepare('SELECT * FROM habits ORDER BY rowid').all();
       return json(rows.results.map(row=>({...JSON.parse(String(row.payload)),revision:row.revision})));
     }
+    if(operation==='export'){
+      const now=Date.now();
+      const [recordRows,habitRows,sessionRows]=await db(env).batch([
+        db(env).prepare('SELECT * FROM records ORDER BY date,id'),
+        db(env).prepare('SELECT * FROM habits ORDER BY id'),
+        db(env).prepare('SELECT id,device_label AS deviceLabel,created_at AS createdAt,last_used_at AS lastUsedAt,expires AS expiresAt,revoked_at AS revokedAt FROM sessions WHERE user_id=? ORDER BY created_at,id').bind(account.id),
+      ]);
+      return json({
+        format:'mint-creek-full-export',version:1,exportedAt:new Date(now).toISOString(),
+        account:{id:account.id,email:account.email,name:account.name,revision:account.revision},
+        settings:{...defaultSettings,...JSON.parse(account.settings)},
+        records:recordRows.results.map(unpack),
+        habits:habitRows.results.map(row=>({...JSON.parse(String(row.payload)),revision:row.revision})),
+        sessions:sessionRows.results.map(row=>({...row,current:row.id===account.sessionId,status:row.revokedAt!==null?'revoked':Number(row.expiresAt)<=now?'expired':'active'})),
+      });
+    }
     return json({error:'未找到'},404);
   }
 
