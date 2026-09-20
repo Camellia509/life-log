@@ -10,6 +10,7 @@
 - 月度统计、日期筛选、月度重点和自定义习惯。
 - Excel 导入预览、去重、当前月导出和全部导出。
 - 登录设备列表、最近使用时间和单独撤销。
+- 带内容校验的完整 JSON 手动导出，以及仅恢复记录的安全预览导入。
 
 网页不提供用户图片上传、分享、邀请或多人功能。界面插画随静态前端发布，不进入个人数据库。
 
@@ -87,12 +88,13 @@ npm run worker:dry-run
 npm test
 npm run build
 npm run test:static
+npm run backup:rehearse
 ```
 
 静态构建输出到被 Git 忽略的 `dist/`：顶层是 `index.html`、favicon 和两张水彩素材，编译后的 JavaScript/CSS 位于 `dist/assets/`。没有服务端 bundle、数据库或个人数据。
 
 ## 数据与恢复
 
-本地 D1 位于 `.wrangler/state`，不要删除。建议定期使用“导出全部记录”保存 Excel 副本。迁移、恢复和架构边界见 [架构说明](docs/ARCHITECTURE.md)、[数据迁移说明](docs/DATA_MIGRATION.md)与[恢复说明](docs/RECOVERY.md)。
+本地 D1 位于 `.wrangler/state`，不要删除。网页可分别导出 Excel 记录与带校验的完整 JSON。阶段 4 已准备独立私有仓库的加密 D1 备份模板，但尚未启用。迁移、恢复和架构边界见 [架构说明](docs/ARCHITECTURE.md)、[数据迁移说明](docs/DATA_MIGRATION.md)、[本地恢复说明](docs/RECOVERY.md)与[自动备份和完整恢复](docs/BACKUP_AND_RESTORE.md)。
 
 目标仍是免费、跨设备公网访问、尽力覆盖中国大陆网络，不承诺大陆稳定性。不购买域名，不绑定付款方式，不启用付费计划或按量计费。
