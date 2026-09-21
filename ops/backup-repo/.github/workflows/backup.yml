@@ -195,11 +195,34 @@ jobs:
           BACKUP_KEEP_WEEKLY: ${{ vars.BACKUP_KEEP_WEEKLY || '4' }}
           BACKUP_KEEP_MONTHLY: ${{ vars.BACKUP_KEEP_MONTHLY || '6' }}
         run: |
-          git -C backup-store fetch origin "refs/heads/$BACKUP_BRANCH:refs/remotes/origin/$BACKUP_BRANCH" || true
-          EXPECTED_SHA="$(git -C backup-store rev-parse "refs/remotes/origin/$BACKUP_BRANCH" 2>/dev/null || true)"
+          set -euo pipefail
+          EXPECTED_SHA=""
+          set +e
+          git -C backup-store ls-remote --exit-code --heads origin "refs/heads/$BACKUP_BRANCH" >/dev/null
+          REMOTE_BRANCH_STATUS=$?
+          set -e
+          case "$REMOTE_BRANCH_STATUS" in
+            0)
+              git -C backup-store fetch --no-tags origin "refs/heads/$BACKUP_BRANCH:refs/remotes/origin/$BACKUP_BRANCH"
+              EXPECTED_SHA="$(git -C backup-store rev-parse --verify "refs/remotes/origin/$BACKUP_BRANCH^{commit}")"
+              echo "Existing snapshot branch found; rebuilding from its verified commit."
+              ;;
+            2)
+              echo "No existing snapshot branch found; creating the first parentless snapshot."
+              ;;
+            *)
+              echo "::error title=Snapshot branch check failed::Could not determine whether the remote snapshot branch exists (git exit $REMOTE_BRANCH_STATUS). The existing remote branch was not modified."
+              exit "$REMOTE_BRANCH_STATUS"
+              ;;
+          esac
           mkdir -p "$RUNNER_TEMP/snapshot"
           if test -n "$EXPECTED_SHA"; then
-            git -C backup-store archive "$EXPECTED_SHA" | tar -x -C "$RUNNER_TEMP/snapshot"
+            git -C backup-store ls-tree -r --name-only "$EXPECTED_SHA" > "$RUNNER_TEMP/existing-snapshot-files"
+            if test -s "$RUNNER_TEMP/existing-snapshot-files"; then
+              git -C backup-store archive "$EXPECTED_SHA" | tar -x -C "$RUNNER_TEMP/snapshot"
+            else
+              echo "Existing snapshot commit has an empty tree; starting from the newly generated backup only."
+            fi
           fi
           cp "$RUNNER_TEMP/new-backup"/* "$RUNNER_TEMP/snapshot/"
           node source/scripts/backup/retention.mjs --dir="$RUNNER_TEMP/snapshot" --daily="$BACKUP_KEEP_DAILY" --weekly="$BACKUP_KEEP_WEEKLY" --monthly="$BACKUP_KEEP_MONTHLY"
@@ -209,6 +232,7 @@ jobs:
         env:
           BACKUP_BRANCH: ${{ vars.BACKUP_BRANCH || 'backups' }}
         run: |
+          set -euo pipefail
           EXPECTED_SHA="$(cat "$RUNNER_TEMP/expected-sha")"
           export GIT_INDEX_FILE="$RUNNER_TEMP/backup-index"
           git -C backup-store config user.name "github-actions[bot]"
@@ -220,10 +244,11 @@ jobs:
           if test -n "$EXPECTED_SHA"; then
             LEASE="--force-with-lease=refs/heads/$BACKUP_BRANCH:$EXPECTED_SHA"
           else
+            echo "Publishing the first snapshot only if the remote branch is still absent."
             LEASE="--force-with-lease=refs/heads/$BACKUP_BRANCH:"
           fi
           git -C backup-store push origin "$COMMIT:refs/heads/$BACKUP_BRANCH" "$LEASE"
 
       - name: Remove plaintext and temporary credentials
         if: always()
-        run: rm -rf "$RUNNER_TEMP/new-backup" "$RUNNER_TEMP/verification" "$RUNNER_TEMP/wrangler-backup.toml" "$RUNNER_TEMP/d1-preflight.json" "$RUNNER_TEMP/age" "$RUNNER_TEMP/snapshot" "$RUNNER_TEMP/backup-index"
+        run: rm -rf "$RUNNER_TEMP/new-backup" "$RUNNER_TEMP/verification" "$RUNNER_TEMP/wrangler-backup.toml" "$RUNNER_TEMP/d1-preflight.json" "$RUNNER_TEMP/age" "$RUNNER_TEMP/snapshot" "$RUNNER_TEMP/backup-index" "$RUNNER_TEMP/existing-snapshot-files"
