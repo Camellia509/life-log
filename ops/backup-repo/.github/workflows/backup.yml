@@ -51,10 +51,32 @@ jobs:
           BACKUP_KEEP_WEEKLY: ${{ vars.BACKUP_KEEP_WEEKLY || '4' }}
           BACKUP_KEEP_MONTHLY: ${{ vars.BACKUP_KEEP_MONTHLY || '6' }}
         run: |
-          test -n "$CF_API_TOKEN"
-          test -n "$CF_ACCOUNT_ID"
-          test -n "$D1_DATABASE_ID"
-          test -n "$AGE_RECIPIENT"
+          set -euo pipefail
+          check_secret() {
+            name="$1"
+            value="$2"
+            if test -z "$value"; then
+              echo "::error title=Missing secret::$name is empty or unavailable."
+              exit 1
+            fi
+            trimmed="$(printf '%s' "$value" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            if test "$value" != "$trimmed"; then
+              echo "::error title=Invalid secret::$name contains leading or trailing whitespace. Update the GitHub Actions secret with the exact raw value."
+              exit 1
+            fi
+          }
+          check_secret CLOUDFLARE_API_TOKEN "$CF_API_TOKEN"
+          check_secret CLOUDFLARE_ACCOUNT_ID "$CF_ACCOUNT_ID"
+          check_secret D1_DATABASE_ID "$D1_DATABASE_ID"
+          check_secret BACKUP_AGE_RECIPIENT "$AGE_RECIPIENT"
+          case "$CF_ACCOUNT_ID" in
+            *[!0-9a-fA-F]*|'') echo "::error title=Invalid account ID::CLOUDFLARE_ACCOUNT_ID must be exactly 32 hexadecimal characters."; exit 1 ;;
+          esac
+          test "${#CF_ACCOUNT_ID}" -eq 32 || { echo "::error title=Invalid account ID::CLOUDFLARE_ACCOUNT_ID must be exactly 32 hexadecimal characters."; exit 1; }
+          printf '%s' "$D1_DATABASE_ID" | grep -Eq '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' || {
+            echo "::error title=Invalid database ID::D1_DATABASE_ID must be a UUID without surrounding whitespace."
+            exit 1
+          }
           test -n "$D1_DATABASE_NAME"
           test -n "$SOURCE_REPOSITORY"
           test -n "$SOURCE_REF"
@@ -69,6 +91,58 @@ jobs:
         working-directory: source
         run: npm ci
 
+      - name: Preflight D1 read access
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
+          D1_DATABASE_NAME: ${{ vars.D1_DATABASE_NAME }}
+        run: |
+          set -euo pipefail
+          PREFLIGHT_RESPONSE="$RUNNER_TEMP/d1-preflight.json"
+          if ! HTTP_STATUS="$(curl --silent --show-error \
+            --output "$PREFLIGHT_RESPONSE" \
+            --write-out '%{http_code}' \
+            --request GET \
+            --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$D1_DATABASE_ID")"; then
+            echo "::error title=D1 preflight transport failure::Could not reach the Cloudflare API. No export was attempted."
+            exit 1
+          fi
+          if test "$HTTP_STATUS" != "200"; then
+            echo "::error title=D1 read preflight failed::Cloudflare rejected the read-only database check with HTTP $HTTP_STATUS. No export was attempted."
+            python3 - "$PREFLIGHT_RESPONSE" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          path = pathlib.Path(sys.argv[1])
+          try:
+              payload = json.loads(path.read_text(encoding="utf-8"))
+          except Exception:
+              print("Cloudflare response was not valid JSON.", file=sys.stderr)
+              raise SystemExit(0)
+          for error in (payload.get("errors") or [])[:3]:
+              code = str(error.get("code", "unknown"))
+              message = " ".join(str(error.get("message", "unspecified error")).split())[:300]
+              print(f"Cloudflare error code={code}: {message}", file=sys.stderr)
+          PY
+            exit 1
+          fi
+          python3 - "$PREFLIGHT_RESPONSE" "$D1_DATABASE_ID" "$D1_DATABASE_NAME" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+          result = payload.get("result") or {}
+          if payload.get("success") is not True:
+              raise SystemExit("D1 preflight returned HTTP 200 without success=true.")
+          if result.get("uuid") != sys.argv[2] or result.get("name") != sys.argv[3]:
+              raise SystemExit("D1 preflight returned a database that does not match the configured name and ID.")
+          print(f"D1 read preflight passed for database {result['name']}.")
+          PY
+
       - name: Export remote D1 into temporary staging
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -76,10 +150,12 @@ jobs:
           D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
           D1_DATABASE_NAME: ${{ vars.D1_DATABASE_NAME }}
         run: |
+          set -euo pipefail
           mkdir -p "$RUNNER_TEMP/new-backup"
           chmod 700 "$RUNNER_TEMP/new-backup"
           cat > "$RUNNER_TEMP/wrangler-backup.toml" <<EOF
           name = "life-log-backup"
+          account_id = "$CLOUDFLARE_ACCOUNT_ID"
           compatibility_date = "2026-09-20"
           [[d1_databases]]
           binding = "DB"
@@ -87,7 +163,14 @@ jobs:
           database_id = "$D1_DATABASE_ID"
           EOF
           cd source
-          npx wrangler d1 export "$D1_DATABASE_NAME" --remote --output "$RUNNER_TEMP/new-backup/export.sql" --config "$RUNNER_TEMP/wrangler-backup.toml"
+          if ! npx wrangler d1 export "$D1_DATABASE_NAME" --remote --output "$RUNNER_TEMP/new-backup/export.sql" --config "$RUNNER_TEMP/wrangler-backup.toml"; then
+            echo "::error title=D1 export failed::The read-only preflight passed, but Wrangler could not export D1. The configured account_id was explicit and no snapshot branch was modified."
+            exit 1
+          fi
+          test -s "$RUNNER_TEMP/new-backup/export.sql" || {
+            echo "::error title=Empty D1 export::Wrangler completed without producing a non-empty SQL file. No snapshot branch was modified."
+            exit 1
+          }
 
       - name: Verify, encrypt, and checksum new backup
         env:
@@ -143,4 +226,4 @@ jobs:
 
       - name: Remove plaintext and temporary credentials
         if: always()
-        run: rm -rf "$RUNNER_TEMP/new-backup" "$RUNNER_TEMP/verification" "$RUNNER_TEMP/wrangler-backup.toml" "$RUNNER_TEMP/age" "$RUNNER_TEMP/snapshot" "$RUNNER_TEMP/backup-index"
+        run: rm -rf "$RUNNER_TEMP/new-backup" "$RUNNER_TEMP/verification" "$RUNNER_TEMP/wrangler-backup.toml" "$RUNNER_TEMP/d1-preflight.json" "$RUNNER_TEMP/age" "$RUNNER_TEMP/snapshot" "$RUNNER_TEMP/backup-index"

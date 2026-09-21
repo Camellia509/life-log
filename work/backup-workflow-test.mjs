@@ -9,6 +9,12 @@ function check(name,condition){assert.ok(condition,name);checks.push(name)}
 check('template is isolated from active workflows',!file.startsWith('.github/workflows/'));
 check('daily schedule and manual trigger',workflow.includes('schedule:')&&workflow.includes('workflow_dispatch:'));
 check('remote D1 export is explicit',workflow.includes('d1 export')&&workflow.includes('--remote'));
+check('wrangler config has explicit account id',workflow.includes('account_id = "$CLOUDFLARE_ACCOUNT_ID"'));
+check('read-only D1 preflight precedes export',workflow.includes('Preflight D1 read access')&&workflow.indexOf('Preflight D1 read access')<workflow.indexOf('Export remote D1'));
+check('preflight uses database metadata GET',workflow.includes('--request GET')&&workflow.includes('/d1/database/$D1_DATABASE_ID'));
+check('secret edge whitespace is rejected safely',workflow.includes('contains leading or trailing whitespace')&&!workflow.includes('echo "$CF_API_TOKEN"'));
+check('preflight response is removed',workflow.includes('d1-preflight.json')&&workflow.includes('if: always()'));
+check('export failure is explicit and guarded',workflow.includes('D1 export failed')&&workflow.includes('test -s "$RUNNER_TEMP/new-backup/export.sql"'));
 check('no plaintext artifact upload',!workflow.includes('upload-artifact'));
 check('age recipient comes from secret',workflow.includes('secrets.BACKUP_AGE_RECIPIENT'));
 check('new backup validation precedes snapshot rebuild',workflow.indexOf('Verify, encrypt, and checksum')<workflow.indexOf('Build retained snapshot'));
